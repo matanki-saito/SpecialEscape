@@ -59,16 +59,19 @@ def generate_encoder(game_type, ext):
     if game_type == "eu4":
         escape_targets = eu4_escape_targets
         high_byte_shift = -9
-        low_byte_shift = 15
+        low_byte_shift = 14
     elif game_type == "ck2":
         escape_targets = ck2_escape_targets
         high_byte_shift = -9
-        low_byte_shift = 16
+        low_byte_shift = 15
     else:
         raise Exception("typeが不明")
 
     def ___(src_array):
         return __(map(ucs_to_cp1252, src_array))
+
+    def ____(src_array):
+        return map(cp1252_to_ucs2, __(src_array))
 
     def __(src_array):
         """
@@ -123,7 +126,7 @@ def generate_encoder(game_type, ext):
 
     if game_type == "eu4":
         if ext == "yml":
-            return __
+            return ____
         elif ext == "txt":
             return ___
         else:
@@ -173,10 +176,52 @@ ucs2_to_cp1252_table = {
     0x0178: 0x9F  # Ÿ
 }
 
+cp1252_to_ucs2_table = {
+    0x80: 0x20AC,  # €
+    # 0x81
+    0x82: 0x201A,  # ‚
+    0x83: 0x0192,  # ƒ
+    0x84: 0x201E,  # „
+    0x85: 0x2026,  # …
+    0x86: 0x2020,  # †
+    0x87: 0x2021,  # ‡
+    0x88: 0x02C6,  # ˆ
+    0x89: 0x2030,  # ‰
+    0x8A: 0x0160,  # Š
+    0x8B: 0x2039,  # ‹
+    0x8C: 0x0152,  # Œ
+    # 0x8D
+    0x8E: 0x017D,  # Ž
+    # 0x8F
+    # 0x90
+    0x91: 0x2018,  # ‘
+    0x92: 0x2019,  # ’
+    0x93: 0x201C,  # “
+    0x94: 0x201D,  # ”
+    0x95: 0x2022,  # •
+    0x96: 0x2013,  # –
+    0x97: 0x2014,  # —
+    0x98: 0x02DC,  # ˜
+    0x99: 0x2122,  # ™
+    0x9A: 0x0161,  # š
+    0x9B: 0x203A,  # ›
+    0x9C: 0x0153,  # œ
+    # 0x9D
+    0x9E: 0x017E,  # ž
+    0x9F: 0x0178  # Ÿ
+}
+
 
 def ucs_to_cp1252(code_point):
     if code_point in ucs2_to_cp1252_table:
         return ucs2_to_cp1252_table[code_point]
+    else:
+        return code_point
+
+
+def cp1252_to_ucs2(code_point):
+    if code_point in cp1252_to_ucs2_table:
+        return cp1252_to_ucs2_table[code_point]
     else:
         return code_point
 
@@ -190,7 +235,7 @@ def generate_printer(game_type, ext):
     """
 
     def utf8_printer(src_array, out_file_path):
-        with open(out_file_path, "wt", encoding="utf-8") as fw:
+        with open(out_file_path, "wt", encoding="utf_8_sig") as fw:
             text = "".join(map(chr, src_array))
             fw.write(text)
 
@@ -231,13 +276,15 @@ def target_is_directory(params):
     is_out_dir = os.path.isdir(str(params.out))
 
     # 走査
-    for file_path in pathlib.Path(params.src).glob('**/*.txt'):
+    for file_path in pathlib.Path(params.src).glob('**/*.*'):
+        if file_path.suffix not in ['.yml', '.csv', '.txt']:
+            continue
 
         # 指定がない場合は、ソースと同じ場所に、同じ名前で拡張子を.encodedにしたものを保存する
         if params.out is None:
             out_file_path = os.path.join(
                 os.path.dirname(os.path.abspath(str(file_path))),
-                os.path.basename(str(file_path)) + ".utf8"
+                os.path.basename(str(file_path)) + ".encode"
             )
 
         # 出力先が存在するディレクトリ
@@ -257,7 +304,8 @@ def target_is_directory(params):
         do_file(in_file_path=file_path,
                 out_file_path=out_file_path,
                 encoder=generate_encoder(params.type, os.path.splitext(str(file_path))[1][1:]),
-                printer=generate_printer(params.type, os.path.splitext(str(file_path))[1][1:]))
+                printer=generate_printer(params.type, os.path.splitext(str(file_path))[1][1:]),
+                is_bom=params.bom)
 
 
 def target_is_file(params):
@@ -265,7 +313,7 @@ def target_is_file(params):
     if params.out is None:
         out_file_path = os.path.join(
             os.path.dirname(os.path.abspath(params.src)),
-            os.path.basename(params.src) + ".utf8"
+            os.path.basename(params.src) + ".encode"
         )
 
     # 指定先が存在するディレクトリの場合は、そこに同じ名前で保存する
@@ -284,21 +332,28 @@ def target_is_file(params):
     do_file(in_file_path=params.src,
             out_file_path=out_file_path,
             encoder=generate_encoder(params.type, os.path.splitext(str(params.src))[1][1:]),
-            printer=generate_printer(params.type, os.path.splitext(str(params.src))[1][1:]))
+            printer=generate_printer(params.type, os.path.splitext(str(params.src))[1][1:]),
+            is_bom=params.bom)
 
 
-def do_file(in_file_path, out_file_path, encoder, printer):
+def do_file(in_file_path, out_file_path, encoder, printer, is_bom):
     """
     ファイルを変換
     :param in_file_path: 入力先ファイルパス
     :param out_file_path: 出力先ファイルパス
     :param encoder: エンコーダー
     :param printer: プリンター
+    :param is_bom : bom付きかどうか
     :return:
     """
 
+    if is_bom:
+        encoding = 'utf_8_sig'
+    else:
+        encoding = 'utf_8'
+
     # 読み込み
-    with open(in_file_path, "rt", encoding="utf-8") as fr:
+    with open(in_file_path, "rt", encoding=encoding) as fr:
         printer(src_array=encoder(src_array=map(ord, fr.read())),
                 out_file_path=out_file_path)
 
@@ -335,6 +390,13 @@ def generate_default_arg_parser():
         dest='type',
         default="eu4",
         help='eu4 or ck2')
+
+    # bomがある
+    result.add_argument(
+        '--bom',
+        action='store_true',
+        dest='bom',
+        help='utf8 with bom')
 
     return result
 
