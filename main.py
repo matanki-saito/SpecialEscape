@@ -47,14 +47,28 @@ ck2_escape_targets = [
 ]
 
 
-def generate_encoder(escape_targets, high_byte_shift, low_byte_shift):
+def generate_encoder(game_type, ext):
     """
-    変換器生成
-    :param escape_targets: エスケープ対象のコードポイント配列
-    :param low_byte_shift: 下位バイトシフト数
-    :param high_byte_shift 上位バイトシフト数
-    :return:変換後の配列
+
+    :param game_type: ゲーム種別
+    :param ext: 拡張子
+    :return:
     """
+
+    # 定義
+    if game_type == "eu4":
+        escape_targets = eu4_escape_targets
+        high_byte_shift = -9
+        low_byte_shift = 15
+    elif game_type == "ck2":
+        escape_targets = ck2_escape_targets
+        high_byte_shift = -9
+        low_byte_shift = 16
+    else:
+        raise Exception("typeが不明")
+
+    def ___(src_array):
+        return __(map(ucs_to_cp1252, src_array))
 
     def __(src_array):
         """
@@ -107,10 +121,113 @@ def generate_encoder(escape_targets, high_byte_shift, low_byte_shift):
 
         return result
 
-    return __
+    if game_type == "eu4":
+        if ext == "yml":
+            return __
+        elif ext == "txt":
+            return ___
+        else:
+            raise Exception()
+
+    elif game_type == "ck2":
+        if ext in ["csv", "txt"]:
+            return ___
+        else:
+            raise Exception()
+    else:
+        raise Exception()
 
 
-def target_is_directory(params, encoder):
+ucs2_to_cp1252_table = {
+    0x20AC: 0x80,  # €
+    # 0x81
+    0x201A: 0x82,  # ‚
+    0x0192: 0x83,  # ƒ
+    0x201E: 0x84,  # „
+    0x2026: 0x85,  # …
+    0x2020: 0x86,  # †
+    0x2021: 0x87,  # ‡
+    0x02C6: 0x88,  # ˆ
+    0x2030: 0x89,  # ‰
+    0x0160: 0x8A,  # Š
+    0x2039: 0x8B,  # ‹
+    0x0152: 0x8C,  # Œ
+    # 0x8D
+    0x017D: 0x8E,  # Ž
+    # 0x8F
+    # 0x90
+    0x2018: 0x91,  # ‘
+    0x2019: 0x92,  # ’
+    0x201C: 0x93,  # “
+    0x201D: 0x94,  # ”
+    0x2022: 0x95,  # •
+    0x2013: 0x96,  # –
+    0x2014: 0x97,  # —
+    0x02DC: 0x98,  # ˜
+    0x2122: 0x99,  # ™
+    0x0161: 0x9A,  # š
+    0x203A: 0x9B,  # ›
+    0x0153: 0x9C,  # œ
+    # 0x9D
+    0x017E: 0x9E,  # ž
+    0x0178: 0x9F  # Ÿ
+}
+
+
+def ucs_to_cp1252(code_point):
+    if code_point in ucs2_to_cp1252_table:
+        return ucs2_to_cp1252_table[code_point]
+    else:
+        return code_point
+
+
+def generate_printer(game_type, ext):
+    """
+    プリンター生成器
+    :param game_type: ゲーム種別
+    :param ext: 拡張子
+    :return: プリンター
+    """
+
+    def utf8_printer(src_array, out_file_path):
+        with open(out_file_path, "wt", encoding="utf-8") as fw:
+            text = "".join(map(chr, src_array))
+            fw.write(text)
+
+    def cp1252_like_printer(src_array, out_file_path):
+        """
+        純粋にCP1252ではない。（規定されていない0x81や0x90などのコードポイントも出現しうる）、
+        バイナリモードで書き込む
+        :param src_array:
+        :param out_file_path:
+        :return:
+        """
+
+        w = b''
+        for a in src_array:
+            w += ucs_to_cp1252(a).to_bytes(1, byteorder='big')
+
+        with open(out_file_path, "wb") as fw:
+            fw.write(w)
+
+    if game_type == "eu4":
+        if ext == "yml":
+            return utf8_printer
+        elif ext == "txt":
+            return cp1252_like_printer
+        else:
+            raise Exception()
+
+    elif game_type == "ck2":
+        if ext in ["csv", "txt"]:
+            return cp1252_like_printer
+        else:
+            raise Exception()
+    else:
+        raise Exception()
+
+
+def target_is_directory(params):
     is_out_dir = os.path.isdir(str(params.out))
 
     # 走査
@@ -139,10 +256,11 @@ def target_is_directory(params, encoder):
 
         do_file(in_file_path=file_path,
                 out_file_path=out_file_path,
-                encoder=encoder)
+                encoder=generate_encoder(params.type, os.path.splitext(str(file_path))[1][1:]),
+                printer=generate_printer(params.type, os.path.splitext(str(file_path))[1][1:]))
 
 
-def target_is_file(params, encoder):
+def target_is_file(params):
     # 指定がない場合は、ソースと同じ場所に、同じ名前で拡張子を.utf8にしたものを保存する
     if params.out is None:
         out_file_path = os.path.join(
@@ -158,34 +276,31 @@ def target_is_file(params, encoder):
         )
 
     # 指定先がフルパス
-    elif params.out is not "":
+    elif params.out != "":
         out_file_path = params.out
     else:
         raise Exception("出力先が不正")
 
     do_file(in_file_path=params.src,
             out_file_path=out_file_path,
-            encoder=encoder)
+            encoder=generate_encoder(params.type, os.path.splitext(str(params.src))[1][1:]),
+            printer=generate_printer(params.type, os.path.splitext(str(params.src))[1][1:]))
 
 
-def do_file(in_file_path, out_file_path, encoder):
+def do_file(in_file_path, out_file_path, encoder, printer):
     """
     ファイルを変換
     :param in_file_path: 入力先ファイルパス
     :param out_file_path: 出力先ファイルパス
     :param encoder: エンコーダー
+    :param printer: プリンター
     :return:
     """
 
     # 読み込み
     with open(in_file_path, "rt", encoding="utf-8") as fr:
-        # 変換
-        escaped_unicode_codepoint_array = encoder(src_array=map(ord, fr.read()))
-
-        # 保存
-        with open(out_file_path, "wt", encoding="utf-8") as fw:
-            text = "".join(map(chr, escaped_unicode_codepoint_array))
-            fw.write(text)
+        printer(src_array=encoder(src_array=map(ord, fr.read())),
+                out_file_path=out_file_path)
 
 
 def generate_default_arg_parser():
@@ -233,27 +348,11 @@ def main():
     parser = generate_default_arg_parser()
     params = parser.parse_args()
 
-    # encoderを作る
-    if params.type is "eu4":
-        encoder = generate_encoder(
-            escape_targets=eu4_escape_targets,
-            high_byte_shift=-9,
-            low_byte_shift=15)
-    elif params.type is "ck2":
-        encoder = generate_encoder(
-            escape_targets=ck2_escape_targets,
-            high_byte_shift=-9,
-            low_byte_shift=16)
-    else:
-        raise Exception("typeが不明")
-
     # fileかdirか
     if os.path.isfile(params.src):
-        target_is_file(params=params,
-                       encoder=encoder)
+        target_is_file(params=params)
     elif os.path.isdir(params.src):
-        target_is_directory(params=params,
-                            encoder=encoder)
+        target_is_directory(params=params)
     else:
         raise Exception("srcがみつからない")
 
